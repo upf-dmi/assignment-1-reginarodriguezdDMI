@@ -1,6 +1,6 @@
 ---
-title: "my title"
-author: "Dummy Surname (dummy@upf.edu)"
+title: "Hands On 1"
+author: "Regina Rodriguez Durant (regina.rodriguezdurant01@estudiant.upf.edu)"
 date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"      
 output:
   html_document:
