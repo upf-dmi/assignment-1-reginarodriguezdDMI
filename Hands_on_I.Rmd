@@ -1,5 +1,5 @@
 ---
-title: "Hands On 1"
+title: "Hands On-1"
 author: "Regina Rodriguez Durant (regina.rodriguezdurant01@estudiant.upf.edu)"
 date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"      
 output:
@@ -10,59 +10,166 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(summarytools)
+library(visdat)
+library(corrplot)
 ```
 
+#This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
 
-This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
-
-We will work with the publication [**Proteomic and Metabolomic Characterization of COVID-19 Patient Sera**](https://www.sciencedirect.com/science/article/pii/S0092867420306279)
-
-# Exercise 1  
-
-Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication.
- 
-## Exercise 1.1  
-
-Reproduce Table 1 from the manuscript using the supplementary data. Match the reported summary statistics   as closely as possible.
-
-Briefly discuss any discrepancies between your results and the published table, and provide possible explanations.
-
-```{r}
+#We will work with the publication [**Proteomic and Metabolomic Characterization of COVID-19 Patient #Sera**]\#(<https://www.sciencedirect.com/science/article/pii/S0092867420306279>)
 
 
+# Exercise 1
+#Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication. data \<-
+read_csv("data/Table_S1. - Clinical_information.csv")
 
-```
 
+# View structure and summary
+
+str(data)
+summary(data)
+
+#Names ofdata 
+
+data <- data %>%
+rename(
+Group = Group,
+Sex = Sex g,
+Age = Age (year),
+BMI = BMI h
+)
+
+## Exercise 1.1
+
+#Reproduce Table 1 from the manuscript using the supplementary data. Match the reported summary statistics as closely as possible.
+
+#Briefly discuss any discrepancies between your results and the published table, and provide possible explanations.
+
+# Check format of the variables
+data <- data %>%
+mutate(
+Group = as.factor(Group),
+Sex = as.factor(Sex)
+)
+
+# Table 1
+
+table1 <- data %>%
+group_by(Group) %>%
+summarise(
+across(where(is.numeric), list(
+Mean = ~round(mean(., na.rm = TRUE), 1),
+SD = ~round(sd(., na.rm = TRUE), 1),
+N = ~sum(!is.na(.))
+), .names = "{.col}_{.fn}"),
+
+# Porcentage of women
+Female_pct = round(mean(Sex == "Female", na.rm = TRUE) * 100, 1),
+Total_N = n(),
+
+.groups = "drop"
+
+) %>%
+select(Group,
+starts_with("Age"),
+starts_with("BMI"),
+Female_pct,
+Total_N)
+
+# Show table 
+
+kable(table1,
+caption = "Reproduced Table 1: Summary Statistics by Group",
+digits = 1) %>%
+kable_styling(full_width = FALSE)
 
 ## Exercise 1.2
-Perform an exploratory data analysis (EDA) of the dataset. At a minimum, include:
 
-- Descriptive statistics for key variables  
-- Appropriate visualizations (e.g. distributions, group comparisons)  
-- A brief written summary of notable patterns, anomalies, or data quality issues  
+#Perform an exploratory data analysis (EDA) of the dataset. At a minimum, include:
+
+#- Descriptive statistics for key variables\
+#- Appropriate visualizations (e.g. distributions, group comparisons)\
+#- A brief written summary of notable patterns, anomalies, or data quality issues
+dfSummary(data)
+
+# Visualization of lost data
+
+vis_miss(data)
+
+# Distribution
+
+ggplot(data, aes(x = Age)) +
+geom_histogram(aes(y = after_stat(density)),
+bins = 20,
+alpha = 0.7,
+fill = "steelblue",
+na.rm = TRUE) +
+geom_density(color = "red", na.rm = TRUE) +
+labs(title = "Distribution of Age",
+x = "Age (years)",
+y = "Density") +
+theme_minimal()
+
+#Age per group
+
+ggplot(data, aes(x = Group, y = Age)) +
+geom_boxplot() +
+geom_jitter(width = 0.2, alpha = 0.6, na.rm = TRUE) +
+labs(title = "Age by Group",
+x = "Group",
+y = "Age (years)") +
+theme_minimal()
+
+#CorrelationMatrix
+
+num_vars <- data %>% select(where(is.numeric))
+cor_matrix <- cor(num_vars, use = "complete.obs")
+
+corrplot(cor_matrix,
+method = "color",
+type = "upper",
+order = "hclust")
+
+# BMI per grou´p
+
+ggplot(data, aes(x = Group, y = BMI)) +
+geom_violin(alpha = 0.7, na.rm = TRUE) +
+geom_boxplot(width = 0.2, fill = "white", na.rm = TRUE) +
+labs(title = "BMI Distribution by Group",
+x = "Group",
+y = "BMI") +
+theme_minimal()
 
 
-```{r}
-
-```
 
 # Exercise 2
+
 ## Exercise 2.1
-Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure. 
+
+Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure.
+
 ```{r}
 
 ```
 
-
 ## Exercise 2.2
+
 Identify and handle outliers using an appropriate and well-justified method (e.g. removal, transformation, or robust statistics).
 
 Reproduce Supplementary Figure 1 after outlier handling and discuss how and why the results change.
+
 ```{r}
 
 ```
 
 # Exercise 3
+
 Create a heatmap of the biomarker data. Include group and gender as annotation variables.
 
 ```{r}

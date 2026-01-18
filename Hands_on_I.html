@@ -9,10 +9,10 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="Dummy Surname (dummy@upf.edu)" />
+<meta name="author" content="Regina Rodriguez Durant (regina.rodriguezdurant01@estudiant.upf.edu)" />
 
 
-<title>my title</title>
+<title>Hands On-1</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -349,15 +349,23 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">my title</h1>
-<h4 class="author">Dummy Surname (<a href="mailto:dummy@upf.edu" class="email">dummy@upf.edu</a>)</h4>
-<h4 class="date">Last update: 04 January, 2026</h4>
+<h1 class="title toc-ignore">Hands On-1</h1>
+<h4 class="author">Regina Rodriguez Durant (<a href="mailto:regina.rodriguezdurant01@estudiant.upf.edu" class="email">regina.rodriguezdurant01@estudiant.upf.edu</a>)</h4>
+<h4 class="date">Last update: 18 enero, 2026</h4>
 
 </div>
 
 <div id="TOC">
 <ul>
-<li><a href="#exercise-1" id="toc-exercise-1">Exercise 1</a>
+<li><a href="#exercise-1" id="toc-exercise-1">Exercise 1</a></li>
+<li><a href="#remove-extra-spaces-in-character-columns" id="toc-remove-extra-spaces-in-character-columns">Remove extra spaces in
+character columns</a></li>
+<li><a href="#function-to-convert-european-decimals-to-numeric" id="toc-function-to-convert-european-decimals-to-numeric">Function to
+convert European decimals to numeric</a></li>
+<li><a href="#variables-that-should-be-numeric" id="toc-variables-that-should-be-numeric">Variables that should be
+numeric</a></li>
+<li><a href="#clean-numeric-columns-create-proper-group-factor" id="toc-clean-numeric-columns-create-proper-group-factor">Clean numeric
+columns + create proper Group factor</a>
 <ul>
 <li><a href="#exercise-1.1" id="toc-exercise-1.1">Exercise 1.1</a></li>
 <li><a href="#exercise-1.2" id="toc-exercise-1.2">Exercise 1.2</a></li>
@@ -383,27 +391,76 @@ Sera</strong></a></p>
 <h1>Exercise 1</h1>
 <p>Download and load Supplementary Table 1 (“Additional Demographical
 and Baseline Characteristics of COVID-19 Patients and Control Groups”)
-from the supplementary materials of the publication.</p>
+from the supplementary materials of the publication. # Read the XLSX
+file data_raw &lt;- read_excel( “data/Table_S1.xlsx”, sheet =
+“Clinical_information” )</p>
+</div>
+<div id="remove-extra-spaces-in-character-columns" class="section level1">
+<h1>Remove extra spaces in character columns</h1>
+<p>glimpse(data_raw) data_raw &lt;- data_raw %&gt;%
+mutate(across(where(is.character), trimws))</p>
+</div>
+<div id="function-to-convert-european-decimals-to-numeric" class="section level1">
+<h1>Function to convert European decimals to numeric</h1>
+<p>to_numeric &lt;- function(x) as.numeric(gsub(“,”, “.”, x))</p>
+</div>
+<div id="variables-that-should-be-numeric" class="section level1">
+<h1>Variables that should be numeric</h1>
+<p>num_vars &lt;- c( “Age (year)”, “BMI h”, “WBC count, ×109/L”,
+“Lymphocyte count, ×109/L”, “Monocyte count, ×109/L”, “Platelet count,
+×109/L”, “CRP i, mg/L”, “ALT j, U/L”, “AST k, U/L”, “GGT l, U/L”, “TBIL
+m, μmol/L”, “DBIL n, μmol/L”, “Creatinine, μmol/L”, “Glucose, mmol/L”
+)</p>
+</div>
+<div id="clean-numeric-columns-create-proper-group-factor" class="section level1">
+<h1>Clean numeric columns + create proper Group factor</h1>
+<p>data &lt;- data_raw %&gt;% mutate(across(all_of(num_vars),
+to_numeric)) %&gt;% mutate( Group = factor(case_when(
+<code>Group d</code> == 0 ~ “Healthy”, <code>Group d</code> == 1 ~
+“Control/Other”, <code>Group d</code> == 2 ~ “Mild”,
+<code>Group d</code> == 3 ~ “Severe”, TRUE ~ NA_character_ ), levels =
+c(“Healthy”, “Mild”, “Severe”, “Control/Other”)) )</p>
 <div id="exercise-1.1" class="section level2">
 <h2>Exercise 1.1</h2>
-<p>Reproduce Table 1 from the manuscript using the supplementary data.
-Match the reported summary statistics as closely as possible.</p>
-<p>Briefly discuss any discrepancies between your results and the
-published table, and provide possible explanations.</p>
+<p>key_vars &lt;- c( “Age (year)”, “BMI h”, “WBC count, ×109/L”,
+“Lymphocyte count, ×109/L”, “CRP i, mg/L” )</p>
+<p>table1 &lt;- data %&gt;% filter(Group %in% c(“Healthy”, “Mild”,
+“Severe”)) %&gt;% group_by(Group) %&gt;% summarise( n = n(),
+across(all_of(key_vars), ~ paste0(round(mean(.x, na.rm = TRUE), 1), ” ±
+“, round(sd(.x, na.rm = TRUE), 1))) )</p>
+<p>kable(table1, caption = “Table 1: Demographical &amp; Baseline
+Characteristics by Group”, align = “c”) %&gt;%
+kable_styling(bootstrap_options = c(“striped”, “hover”)) %&gt;%
+add_header_above(c(” ” = 2, “Clinical Characteristics” = 5))</p>
 </div>
 <div id="exercise-1.2" class="section level2">
 <h2>Exercise 1.2</h2>
-<p>Perform an exploratory data analysis (EDA) of the dataset. At a
+<p>#Perform an exploratory data analysis (EDA) of the dataset. At a
 minimum, include:</p>
-<ul>
-<li>Descriptive statistics for key variables<br />
-</li>
-<li>Appropriate visualizations (e.g. distributions, group
+<p>#- Descriptive statistics for key variables<br />
+#- Appropriate visualizations (e.g. distributions, group
 comparisons)<br />
-</li>
-<li>A brief written summary of notable patterns, anomalies, or data
-quality issues</li>
-</ul>
+#- A brief written summary of notable patterns, anomalies, or data
+quality issues</p>
+<p>desc_stats &lt;- data %&gt;% summarise( across(all_of(key_vars),
+list( mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE), median
+= ~median(.x, na.rm = TRUE), IQR = ~IQR(.x, na.rm = TRUE) )) )</p>
+<p>kable(desc_stats, caption = “Descriptive Statistics for Key
+Variables”)</p>
+<p>missing_summary &lt;- data %&gt;% summarise(across(all_of(key_vars),
+~ sum(is.na(.x)))) %&gt;% pivot_longer(everything(), names_to =
+“Variable”, values_to = “Missing_Values”)</p>
+<p>kable(missing_summary, caption = “Missing values per variable”)</p>
+<p>data_long &lt;- data %&gt;% select(Group, all_of(key_vars)) %&gt;%
+pivot_longer(-Group, names_to = “Variable”, values_to = “Value”) %&gt;%
+filter(!is.na(Value))</p>
+<p>ggplot(data_long, aes(x = Group, y = Value)) +
+geom_boxplot(outlier.shape = 16, outlier.size = 2) + geom_jitter(width =
+0.2, alpha = 0.5, size = 1) + facet_wrap(~ Variable, scales = “free_y”,
+ncol = 3) + labs( title = “Exploratory Data Analysis: Key Clinical
+Variables by Group”, x = “COVID-19 Group”, y = “Measured Value” ) +
+theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust =
+1))</p>
 </div>
 </div>
 <div id="exercise-2" class="section level1">
@@ -436,25 +493,31 @@ analyses.</p>
 </div>
 <div id="session-info" class="section level1 unnumbered">
 <h1 class="unnumbered">session info</h1>
-<p>R version 4.3.3 (2024-02-29) Platform: x86_64-pc-linux-gnu (64-bit)
-Running under: Ubuntu 24.04.2 LTS</p>
-<p>Matrix products: default BLAS:
-/usr/lib/x86_64-linux-gnu/blas/libblas.so.3.12.0 LAPACK:
-/usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.12.0</p>
-<p>locale: [1] LC_CTYPE=C.UTF-8 LC_NUMERIC=C LC_TIME=C.UTF-8<br />
-[4] LC_COLLATE=C.UTF-8 LC_MONETARY=C.UTF-8 LC_MESSAGES=C.UTF-8<br />
-[7] LC_PAPER=C.UTF-8 LC_NAME=C LC_ADDRESS=C<br />
-[10] LC_TELEPHONE=C LC_MEASUREMENT=C.UTF-8 LC_IDENTIFICATION=C</p>
-<p>time zone: Etc/UTC tzcode source: system (glibc)</p>
+<p>R version 4.5.2 (2025-10-31 ucrt) Platform: x86_64-w64-mingw32/x64
+Running under: Windows 11 x64 (build 26200)</p>
+<p>Matrix products: default LAPACK version 3.12.1</p>
+<p>locale: [1] LC_COLLATE=Spanish_Spain.utf8 LC_CTYPE=es_ES.UTF-8<br />
+[3] LC_MONETARY=Spanish_Spain.utf8 LC_NUMERIC=C<br />
+[5] LC_TIME=Spanish_Spain.utf8</p>
+<p>time zone: Europe/Madrid tzcode source: internal</p>
 <p>attached base packages: [1] stats graphics grDevices utils datasets
 methods base</p>
-<p>loaded via a namespace (and not attached): [1] digest_0.6.39 R6_2.6.1
-fastmap_1.2.0 xfun_0.55<br />
-[5] cachem_1.1.0 knitr_1.51 htmltools_0.5.9 rmarkdown_2.30<br />
-[9] lifecycle_1.0.4 cli_3.6.5 sass_0.4.10 jquerylib_0.1.4<br />
-[13] compiler_4.3.3 rstudioapi_0.17.1 tools_4.3.3 evaluate_1.0.5<br />
-[17] bslib_0.9.0 yaml_2.3.12 otel_0.2.0 jsonlite_2.0.0<br />
-[21] rlang_1.1.6</p>
+<p>other attached packages: [1] scales_1.4.0 kableExtra_1.4.0
+ggplot2_4.0.1 tidyr_1.3.2<br />
+[5] dplyr_1.1.4 readr_2.1.6 readxl_1.4.5</p>
+<p>loaded via a namespace (and not attached): [1] gtable_0.3.6
+jsonlite_2.0.0 compiler_4.5.2 tidyselect_1.2.1<br />
+[5] xml2_1.5.1 stringr_1.6.0 jquerylib_0.1.4 textshaping_1.0.4 [9]
+systemfonts_1.3.1 yaml_2.3.12 fastmap_1.2.0 R6_2.6.1<br />
+[13] generics_0.1.4 knitr_1.51 tibble_3.3.1 svglite_2.2.2<br />
+[17] bslib_0.9.0 pillar_1.11.1 RColorBrewer_1.1-3 tzdb_0.5.0<br />
+[21] rlang_1.1.7 stringi_1.8.7 cachem_1.1.0 xfun_0.55<br />
+[25] sass_0.4.10 S7_0.2.1 viridisLite_0.4.2 cli_3.6.5<br />
+[29] withr_3.0.2 magrittr_2.0.4 digest_0.6.39 grid_4.5.2<br />
+[33] rstudioapi_0.18.0 hms_1.1.4 lifecycle_1.0.5 vctrs_0.7.0<br />
+[37] evaluate_1.0.5 glue_1.8.0 farver_2.1.2 cellranger_1.1.0<br />
+[41] rmarkdown_2.30 purrr_1.2.1 tools_4.5.2 pkgconfig_2.0.3<br />
+[45] htmltools_0.5.9</p>
 </div>
 
 
