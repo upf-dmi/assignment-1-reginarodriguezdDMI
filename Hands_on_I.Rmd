@@ -10,40 +10,50 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 library(readr)
 library(dplyr)
 library(knitr)
 library(kableExtra)
 library(ggplot2)
-library(summarytools)
 library(visdat)
 library(corrplot)
 ```
 
-#This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
 
-#We will work with the publication [**Proteomic and Metabolomic Characterization of COVID-19 Patient #Sera**]\#(<https://www.sciencedirect.com/science/article/pii/S0092867420306279>)
+This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
+
+We will work with the publication  
+[**Proteomic and Metabolomic Characterization of COVID-19 Patient Sera**](https://www.sciencedirect.com/science/article/pii/S0092867420306279)
+
 
 
 # Exercise 1
-#Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication. data \<-
-read_csv("data/Table_S1. - Clinical_information.csv")
+Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication.
+```{r load-data}
+data <- read_csv("data/Table_S1. - Clinical_information.csv", na = c("/", ""))
+names(data)
+```
 
-
-# View structure and summary
-
-str(data)
-summary(data)
-
-#Names ofdata 
-
+#Names of the variables
+```{r variables}
 data <- data %>%
 rename(
-Group = Group,
-Sex = Sex g,
-Age = Age (year),
-BMI = BMI h
+Group = `Group d`,
+Sex   = `Sex g`,
+Age   = `Age (year)`,
+BMI   = `BMI h`
+) %>%
+mutate(
+Group = as.factor(Group),
+Sex   = as.factor(Sex)
 )
+```
+
+```{r data}
+str(data)
+summary(data)
+```
 
 ## Exercise 1.1
 
@@ -51,43 +61,31 @@ BMI = BMI h
 
 #Briefly discuss any discrepancies between your results and the published table, and provide possible explanations.
 
-# Check format of the variables
+```{r table1}
 data <- data %>%
-mutate(
-Group = as.factor(Group),
-Sex = as.factor(Sex)
-)
-
-# Table 1
+  mutate(
+    Group = as.factor(Group),
+    Sex   = as.factor(Sex)
+  )
 
 table1 <- data %>%
-group_by(Group) %>%
-summarise(
-across(where(is.numeric), list(
-Mean = ~round(mean(., na.rm = TRUE), 1),
-SD = ~round(sd(., na.rm = TRUE), 1),
-N = ~sum(!is.na(.))
-), .names = "{.col}_{.fn}"),
+  group_by(Group) %>%
+  summarise(
+    Age_mean = round(mean(Age, na.rm = TRUE), 1),
+    Age_sd   = round(sd(Age, na.rm = TRUE), 1),
+    BMI_mean = round(mean(BMI, na.rm = TRUE), 1),
+    BMI_sd   = round(sd(BMI, na.rm = TRUE), 1),
+    Female_pct = round(mean(Sex == "Female", na.rm = TRUE) * 100, 1),
+    N = n(),
+    .groups = "drop"
+  )
 
-# Porcentage of women
-Female_pct = round(mean(Sex == "Female", na.rm = TRUE) * 100, 1),
-Total_N = n(),
-
-.groups = "drop"
-
+kable(
+  table1,
+  caption = "Reproduced Table 1: Summary statistics by group"
 ) %>%
-select(Group,
-starts_with("Age"),
-starts_with("BMI"),
-Female_pct,
-Total_N)
-
-# Show table 
-
-kable(table1,
-caption = "Reproduced Table 1: Summary Statistics by Group",
-digits = 1) %>%
-kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE)
+```
 
 ## Exercise 1.2
 
@@ -96,57 +94,27 @@ kable_styling(full_width = FALSE)
 #- Descriptive statistics for key variables\
 #- Appropriate visualizations (e.g. distributions, group comparisons)\
 #- A brief written summary of notable patterns, anomalies, or data quality issues
-dfSummary(data)
 
-# Visualization of lost data
+```{r basic-summary}
+summary(data)
+```
 
+```{r missing}
 vis_miss(data)
+```
 
-# Distribution
-
+```{r age-dist}
 ggplot(data, aes(x = Age)) +
-geom_histogram(aes(y = after_stat(density)),
-bins = 20,
-alpha = 0.7,
-fill = "steelblue",
-na.rm = TRUE) +
-geom_density(color = "red", na.rm = TRUE) +
-labs(title = "Distribution of Age",
-x = "Age (years)",
-y = "Density") +
-theme_minimal()
+  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7, na.rm = TRUE) +
+  theme_minimal()
+```
 
-#Age per group
 
+```{r age-group}
 ggplot(data, aes(x = Group, y = Age)) +
-geom_boxplot() +
-geom_jitter(width = 0.2, alpha = 0.6, na.rm = TRUE) +
-labs(title = "Age by Group",
-x = "Group",
-y = "Age (years)") +
-theme_minimal()
-
-#CorrelationMatrix
-
-num_vars <- data %>% select(where(is.numeric))
-cor_matrix <- cor(num_vars, use = "complete.obs")
-
-corrplot(cor_matrix,
-method = "color",
-type = "upper",
-order = "hclust")
-
-# BMI per grou´p
-
-ggplot(data, aes(x = Group, y = BMI)) +
-geom_violin(alpha = 0.7, na.rm = TRUE) +
-geom_boxplot(width = 0.2, fill = "white", na.rm = TRUE) +
-labs(title = "BMI Distribution by Group",
-x = "Group",
-y = "BMI") +
-theme_minimal()
-
-
+  geom_boxplot() +
+  theme_minimal()
+```
 
 # Exercise 2
 
@@ -154,8 +122,10 @@ theme_minimal()
 
 Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure.
 
-```{r}
-
+```{r fig1}
+ggplot(data, aes(x = Group, y = Age, fill = Group)) +
+  geom_boxplot() +
+  theme_minimal()
 ```
 
 ## Exercise 2.2
@@ -164,16 +134,22 @@ Identify and handle outliers using an appropriate and well-justified method (e.g
 
 Reproduce Supplementary Figure 1 after outlier handling and discuss how and why the results change.
 
-```{r}
+```{r outliers}
+data_no_out <- data %>%
+  filter(Age < quantile(Age, 0.99, na.rm = TRUE))
 
+ggplot(data_no_out, aes(x = Group, y = Age, fill = Group)) +
+  geom_boxplot() +
+  theme_minimal()
 ```
 
 # Exercise 3
 
 Create a heatmap of the biomarker data. Include group and gender as annotation variables.
 
-```{r}
-
+```{r heatmap}
+num_vars <- data %>% select(where(is.numeric))
+corrplot(cor(num_vars, use = "complete.obs"), method = "color")
 ```
 
 # Conclusion
