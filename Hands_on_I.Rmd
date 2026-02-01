@@ -186,7 +186,7 @@ corrplot(cor_matrix,
 
 # Conclusion
 
-Write a concise conclusion (1 paragraphs) summarizing the main differences observed across the three patient groups based on the twelve clinical parameters. Support your statements with evidence from your analyses.
+
 
 # session info {.unnumbered}
 
