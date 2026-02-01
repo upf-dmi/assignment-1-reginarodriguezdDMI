@@ -5,7 +5,10 @@ date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     toc: true
+    toc_float: true
     fig_caption: true
+    theme: flatly
+    highlight: tango
 ---
 
 ```{r setup, include=FALSE}
@@ -30,9 +33,12 @@ We will work with the publication
 
 # Exercise 1
 Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication.
-```{r load-data}
-data <- read_csv("data/Table_S1. - Clinical_information.csv", na = c("/", ""))
-names(data)
+```{r load-data, warning=FALSE, message=FALSE}
+data <- read_csv("data/Table_S1. - Clinical_information.csv", 
+                 na = c("/", ""), 
+                 locale = locale(decimal_mark = ","),
+                 show_col_types = FALSE)
+
 ```
 
 #Names of the variables
@@ -64,27 +70,29 @@ summary(data)
 ```{r table1}
 data <- data %>%
   mutate(
+    BMI = as.numeric(gsub(",", ".", BMI)),
+    across(where(is.character) & contains("count") | contains("CRP") | contains("BIL"), 
+           ~as.numeric(gsub(",", ".", .))),
     Group = as.factor(Group),
-    Sex   = as.factor(Sex)
+    Sex = as.factor(Sex)
   )
+
 
 table1 <- data %>%
   group_by(Group) %>%
   summarise(
-    Age_mean = round(mean(Age, na.rm = TRUE), 1),
-    Age_sd   = round(sd(Age, na.rm = TRUE), 1),
-    BMI_mean = round(mean(BMI, na.rm = TRUE), 1),
-    BMI_sd   = round(sd(BMI, na.rm = TRUE), 1),
-    Female_pct = round(mean(Sex == "Female", na.rm = TRUE) * 100, 1),
     N = n(),
+    Age_mean = round(mean(Age, na.rm = TRUE), 1),
+    Age_sd = round(sd(Age, na.rm = TRUE), 1),
+    BMI_mean = round(mean(BMI, na.rm = TRUE), 1),
+    BMI_sd = round(sd(BMI, na.rm = TRUE), 1),
+    Female_pct = round(mean(Sex == "1", na.rm = TRUE) * 100, 1),  # Sex coded as 0/1
     .groups = "drop"
   )
 
-kable(
-  table1,
-  caption = "Reproduced Table 1: Summary statistics by group"
-) %>%
-  kable_styling(full_width = FALSE)
+kable(table1, format = "html", digits = 1,
+      caption = "Table 1: Summary statistics by group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
 ## Exercise 1.2
@@ -99,22 +107,31 @@ kable(
 summary(data)
 ```
 
-```{r missing}
-vis_miss(data)
+```{r missing, results='asis'}
+# Missing Data Table 
+missing_pct <- colSums(is.na(data)) / nrow(data) * 100
+missing_df <- data.frame(
+  Variable = names(missing_pct),
+  Percent_NA = round(missing_pct, 1)
+) %>% 
+  arrange(desc(Percent_NA)) %>%
+  filter(Percent_NA > 0)
+
+kable(missing_df, digits = 1, 
+      caption = "Variables with Missing Data (%)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-```{r age-dist}
-ggplot(data, aes(x = Age)) +
-  geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7, na.rm = TRUE) +
-  theme_minimal()
-```
-
-
-```{r age-group}
+```{r age-group, fig.width=10, fig.height=6}
 ggplot(data, aes(x = Group, y = Age)) +
-  geom_boxplot() +
-  theme_minimal()
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  labs(x = "Group\n0=Healthy\n1=Non-COVID-19\n2=non-Severe COVID-19\n3=Severe COVID 19", 
+       y = "Age (years)", 
+       title = "Age Distribution by Patient Group") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 12, angle = 0))
 ```
+
 
 # Exercise 2
 
@@ -122,10 +139,16 @@ ggplot(data, aes(x = Group, y = Age)) +
 
 Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure.
 
-```{r fig1}
+```{r fig1, fig.width=10, fig.height=6}
 ggplot(data, aes(x = Group, y = Age, fill = Group)) +
-  geom_boxplot() +
-  theme_minimal()
+  geom_boxplot(alpha = 0.7) +
+  labs(x = "Group", y = "Age (years)", title = "Supplementary Figure 1") +
+  scale_x_discrete(labels = c("Healthy", "non-COVID-19", "non-Severe COVID-19", "Severe COVID-19")) +
+  scale_fill_manual(values = c("red", "green", "blue", "purple"),
+                    labels = c("1: Healthy", "2: non-COVID-19", "3: non-Severe COVID-19", "4: Severe COVID-19"),
+                    name = "Group") +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 10))
 ```
 
 ## Exercise 2.2
@@ -134,22 +157,31 @@ Identify and handle outliers using an appropriate and well-justified method (e.g
 
 Reproduce Supplementary Figure 1 after outlier handling and discuss how and why the results change.
 
-```{r outliers}
-data_no_out <- data %>%
-  filter(Age < quantile(Age, 0.99, na.rm = TRUE))
+```{r outliers, fig.width=12, fig.height=6}
+data_no_out <- data %>% filter(Age < quantile(Age, 0.99, na.rm = TRUE))
 
 ggplot(data_no_out, aes(x = Group, y = Age, fill = Group)) +
-  geom_boxplot() +
-  theme_minimal()
+  geom_boxplot(alpha = 0.7) +
+  labs(x = "Group", y = "Age (years)", title = "Supplementary Figure 1: After Outlier Removal") +
+  scale_x_discrete(labels = c("Healthy", "non-COVID-19", "non-Severe COVID-19", "Severe COVID-19")) +
+  scale_fill_manual(values = c("red", "green", "blue", "purple"),
+                    labels = c("1: Healthy", "2: non-COVID-19", "3: non-Severe COVID-19", "4: Severe COVID-19"),
+                    name = "Group") +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 10))
 ```
 
 # Exercise 3
 
 Create a heatmap of the biomarker data. Include group and gender as annotation variables.
-
-```{r heatmap}
+```{r heatmap, fig.width=10, fig.height=8}
 num_vars <- data %>% select(where(is.numeric))
-corrplot(cor(num_vars, use = "complete.obs"), method = "color")
+cor_matrix <- cor(num_vars, use = "complete.obs")
+
+corrplot(cor_matrix, 
+         method = "color",
+         title = expression(Biomarker~Correlation~Heatmap),
+         mar = c(0,0,4,0))
 ```
 
 # Conclusion
