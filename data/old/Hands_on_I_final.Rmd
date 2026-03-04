@@ -1,0 +1,1037 @@
+---
+title: "assignment_1-homework-1 "
+author: "Ramona Walch (ramonamaria.walch01@estudiant.upf.edu)"
+date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"      
+output:
+  html_document:
+    toc: true
+    fig_caption: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
+
+We will work with the publication [**Proteomic and Metabolomic Characterization of COVID-19 Patient Sera**](https://www.sciencedirect.com/science/article/pii/S0092867420306279)
+
+# Exercise 1  
+
+Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication.
+ 
+## Exercise 1.1  
+
+Reproduce Table 1 from the manuscript using the supplementary data. Match the reported summary statistics   as closely as possible.
+
+Briefly discuss any discrepancies between your results and the published table, and provide possible explanations.
+
+
+```{r}
+
+## Exercise 1.1
+# Reproduce Table 1 from the manuscript using the supplementary data.
+# Match the reported summary statistics as closely as possible.
+# INCLUDES MICE IMPUTATION FOR MISSING VALUES. 
+
+# ==========================================
+# 1. PACKAGES & SETUP
+# ==========================================
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, readxl, janitor, httr, knitr, flextable, mice)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(knitr)
+library(flextable)
+library(httr)
+library(mice) # Load mice package
+
+# ==========================================
+# 2. DATA DOWNLOAD & IMPORT
+# ==========================================
+url <- "https://ars.els-cdn.com/content/image/1-s2.0-S0092867420306279-mmc1.xlsx"
+original_file <- tempfile(fileext = ".xlsx")
+
+GET(url, write_disk(original_file, overwrite = TRUE))
+
+raw_data <- read_excel(original_file, sheet = 2, na = c("", "NA", "/"))
+
+# ==========================================
+# 3. DATA CLEANING & LOGIC
+# ==========================================
+clean_data <- janitor::clean_names(raw_data, replace = c("\u03bc" = "micro"))
+
+date_vars <- c("admission_date", "onset_date_f", "date_of_progression_to_severe_state")
+
+# FIX: Handle dates - some are datetime, some are text
+clean_data[date_vars] <- lapply(clean_data[date_vars], function(x) {
+  if(inherits(x, "POSIXct") || inherits(x, "POSIXt") || inherits(x, "Date")) {
+    as.Date(x)
+  } else {
+    as.Date(as.character(x))
+  }
+})
+
+clean_data <- clean_data %>%
+  mutate(
+    # Calculate time differences
+    raw_diff_onset = as.numeric(difftime(admission_date, onset_date_f, units = "days")),
+    raw_diff_severe = as.numeric(difftime(date_of_progression_to_severe_state, admission_date, units = "days")),
+    
+    # Set 0 and negative values to NA
+    days_onset_to_admission = ifelse(raw_diff_onset <= 0, NA, raw_diff_onset),
+    days_admission_to_severe = ifelse(raw_diff_severe <= 0, NA, raw_diff_severe),
+    
+    # Group logic
+    group = case_when(
+      group_d == 0 ~ "Healthy Control",
+      group_d == 1 ~ "Non-COVID-19",
+      group_d == 2 ~ "Non-severe",
+      group_d == 3 ~ "Severe",
+      TRUE ~ "Unknown"
+    ),
+    group_total = case_when(
+      group %in% c("Non-severe", "Severe") ~ "COVID-19",
+      TRUE ~ group
+    ),
+    
+    sex = factor(case_when(sex_g == 1 ~ "Male", sex_g == 0 ~ "Female"), levels = c("Male", "Female")),
+    
+    # Ensure numeric for imputation
+    bmi_h = as.numeric(bmi_h),
+    age_year = as.numeric(age_year)
+  ) %>%
+  filter(group != "Unknown")
+
+
+# 3b. MICE IMPUTATION - ALL VARIABLES
+# ==========================================
+
+# We impute missing values for ALL clinical and biomarker variables
+# to ensure complete data for downstream analyses
+
+# 1. Select ALL variables for imputation
+# Include demographics, biomarkers, and time variables
+# EXCLUDE: IDs, dates, and variables with >90% missingness
+
+vars_for_imputation <- c(
+  # Demographics
+  "age_year", "bmi_h", "sex", "group",
+  
+  # Biomarkers - Blood counts
+  "wbc_count_109_l",
+  "lymphocyte_count_109_l",
+  "monocyte_count_109_l",
+  "platelet_count_109_l",
+  
+  # Biomarkers - Inflammatory
+  "crp_i_mg_l",
+  
+  # Biomarkers - Liver function
+  "alt_j_u_l",
+  "ast_k_u_l",
+  "ggt_l_u_l",
+  "tbil_m_micromol_l",
+  "dbil_n_micromol_l",
+  
+  # Biomarkers - Kidney function
+  "creatinine_micromol_l",
+  
+  # Biomarkers - Metabolic
+  "glucose_mmol_l",
+  
+  # Time variables
+  "days_onset_to_admission",
+  "days_admission_to_severe"
+)
+
+# 2. Create a subset for MICE
+# Keep only variables that exist in the dataset
+available_vars <- vars_for_imputation[vars_for_imputation %in% names(clean_data)]
+
+data_for_mice <- clean_data %>% 
+  select(all_of(available_vars)) %>%
+  # Ensure all biomarkers are numeric
+  mutate(across(
+    -c(sex, group), 
+    as.numeric
+  ))
+
+# 3. Run MICE
+# m=5: We create 5 imputed datasets (recommended minimum)
+# maxit=10: Maximum iterations for convergence
+# method='pmm': Predictive Mean Matching (good for numeric data)
+# seed=123: To make results reproducible
+
+cat("\n=== Running MICE Imputation ===\n")
+cat("Variables to impute:", length(available_vars), "\n")
+cat("Observations:", nrow(data_for_mice), "\n\n")
+
+mice_obj <- mice(
+  data_for_mice, 
+  m = 5,           # 5 imputed datasets
+  maxit = 10,      # 10 iterations
+  method = 'pmm',  # Predictive Mean Matching
+  seed = 123, 
+  printFlag = TRUE  # Show progress
+)
+
+# 4. Get the complete data
+# We use the first imputed dataset (could also pool results from all 5)
+complete_mice_data <- complete(mice_obj, 1)
+
+# 5. Merge back into the main dataset
+# Overwrite the original columns with the imputed columns
+clean_mice_data <- clean_data %>%
+  select(-all_of(available_vars)) %>%  # Remove old columns
+  bind_cols(complete_mice_data)         # Add imputed columns
+
+# 6. Verification
+cat("\n=== MICE Imputation Complete ===\n")
+cat("Missing values before imputation:\n")
+print(colSums(is.na(data_for_mice)))
+cat("\nMissing values after imputation:\n")
+print(colSums(is.na(complete_mice_data)))
+
+# Optional: Check imputation quality
+# plot(mice_obj)  # Convergence plots
+# densityplot(mice_obj)  # Density plots of observed vs imputed
+
+# ==========================================
+# 4. HELPER FUNCTIONS
+# ==========================================
+summary_categorical <- function(data, var, group_var){
+  data %>%
+    filter(!is.na(.data[[var]])) %>%
+    count(.data[[group_var]], .data[[var]]) %>%
+    group_by(.data[[group_var]]) %>%
+    mutate(
+      percent = round(n / sum(n) * 100, 1),
+      value = paste0(n, " (", percent, ")")
+    ) %>%
+    ungroup() %>%
+    select(group = .data[[group_var]], category = .data[[var]], value) %>%
+    pivot_wider(names_from = group, values_from = value)
+}
+
+summary_continuous <- function(data, var, group_var){
+  data %>%
+    filter(!is.na(.data[[var]])) %>%
+    group_by(group = .data[[group_var]]) %>%
+    summarise(
+      mean_sd = sprintf("%.1f ± %.1f", mean(.data[[var]]), sd(.data[[var]])),
+      median_iqr = sprintf("%.1f (%.1f–%.1f)", median(.data[[var]]), quantile(.data[[var]], 0.25), quantile(.data[[var]], 0.75)),
+      range = sprintf("%.1f–%.1f", min(.data[[var]]), max(.data[[var]])),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(cols = -group, names_to = "stat", values_to = "value") %>%
+    pivot_wider(names_from = group, values_from = value)
+}
+
+safe_pull <- function(df, col) {
+  if (col %in% colnames(df)) df %>% pull(col) else ""
+}
+
+build_paper_row <- function(data, var, label, is_severe_only = FALSE) {
+  if(!is_severe_only) {
+    total_stats <- summary_continuous(data, var, "group_total")
+  }
+  sub_stats <- summary_continuous(data %>% filter(group %in% c("Non-severe", "Severe")), var, "group")
+  
+  if(is_severe_only) {
+    tibble(
+      label = c(label, "  Mean ± SD", "  Median (IQR)", "  Range"),
+      `Healthy Control` = "", `Non-COVID-19` = "", `COVID-19` = "", `Non-severe` = "",
+      `Severe` = c("", 
+                   safe_pull(sub_stats %>% filter(stat == "mean_sd"), "Severe"),
+                   safe_pull(sub_stats %>% filter(stat == "median_iqr"), "Severe"),
+                   safe_pull(sub_stats %>% filter(stat == "range"), "Severe"))
+    )
+  } else {
+    tibble(
+      label = c(label, "  Mean ± SD", "  Median (IQR)", "  Range"),
+      `Healthy Control` = c("", safe_pull(total_stats %>% filter(stat == "mean_sd"), "Healthy Control"), safe_pull(total_stats %>% filter(stat == "median_iqr"), "Healthy Control"), safe_pull(total_stats %>% filter(stat == "range"), "Healthy Control")),
+      `Non-COVID-19` = c("", safe_pull(total_stats %>% filter(stat == "mean_sd"), "Non-COVID-19"), safe_pull(total_stats %>% filter(stat == "median_iqr"), "Non-COVID-19"), safe_pull(total_stats %>% filter(stat == "range"), "Non-COVID-19")),
+      `COVID-19` = c("", safe_pull(total_stats %>% filter(stat == "mean_sd"), "COVID-19"), safe_pull(total_stats %>% filter(stat == "median_iqr"), "COVID-19"), safe_pull(total_stats %>% filter(stat == "range"), "COVID-19")),
+      `Non-severe` = c("", safe_pull(sub_stats %>% filter(stat == "mean_sd"), "Non-severe"), safe_pull(sub_stats %>% filter(stat == "median_iqr"), "Non-severe"), safe_pull(sub_stats %>% filter(stat == "range"), "Non-severe")),
+      `Severe` = c("", safe_pull(sub_stats %>% filter(stat == "mean_sd"), "Severe"), safe_pull(sub_stats %>% filter(stat == "median_iqr"), "Severe"), safe_pull(sub_stats %>% filter(stat == "range"), "Severe"))
+    )
+  }
+}
+
+# ==========================================
+# 5. ASSEMBLE TABLE
+# ==========================================
+
+# 1. Sex
+sex_main <- summary_categorical(clean_mice_data, "sex", "group_total")
+sex_sub  <- summary_categorical(clean_mice_data %>% filter(group %in% c("Non-severe", "Severe")), "sex", "group")
+
+sex_row <- left_join(sex_main, sex_sub, by = "category") %>%
+  mutate(label = paste0("  ", category)) %>%
+  select(label, `Healthy Control`, `Non-COVID-19`, `COVID-19`, `Non-severe`, `Severe`) %>%
+  bind_rows(tibble(label = "Sex – no. (%)", `Healthy Control` = "", `Non-COVID-19` = "", `COVID-19` = "", `Non-severe` = "", `Severe` = "")) %>%
+  arrange(desc(label))
+
+# 2. Combine Rows
+final_table_data <- bind_rows(
+  sex_row,
+  build_paper_row(clean_mice_data, "age_year", "Age – year"),
+  build_paper_row(clean_mice_data, "bmi_h", "BMI, kg/m²"),
+  build_paper_row(clean_mice_data, "days_onset_to_admission", "Time from Onset to Admission, Days"),
+  build_paper_row(clean_mice_data, "days_admission_to_severe", "Time from Admission to Severe, Days", is_severe_only = TRUE)
+)
+
+# ==========================================
+# 6. OUTPUT
+# ==========================================
+
+kable_table <- final_table_data %>%
+  rename(
+    "Characteristic" = label,
+    "Healthy Control" = `Healthy Control`,
+    "Non-COVID-19" = `Non-COVID-19`,
+    "Total COVID-19" = `COVID-19`,
+    "Non-severe" = `Non-severe`,
+    "Severe" = `Severe`
+  ) %>%
+  mutate(across(everything(), ~ ifelse(. %in% c("NA", "-", NA), "", .)))
+
+# Create the table
+ft <- flextable(kable_table) %>%
+  set_caption("Table 1 Replication (with MICE Imputation for missing Age/BMI)") %>%
+  autofit() %>%
+  theme_booktabs() %>%
+  align(align = "center", part = "all") %>%
+  align(j = 1, align = "left", part = "body")
+
+# Display
+ft 
+
+
+```
+Discussion of Discrepancies:
+
+Our reproduction shows close agreement with the published Table 1, with some notable differences:
+
+Methodological Difference - Missing Data:
+We applied MICE (Multiple Imputation by Chained Equations) to impute missing Age and BMI values, which may differ from the original publication's approach (not specified in the methods). This could explain minor variations in continuous variable statistics, particularly for BMI where the Severe group shows a mean of 25.5 ± 2.4 kg/m² in our analysis.
+
+Sex Distribution
+The Non-severe group in our reproduction shows 23 males (62.2%) and 14 females (37.8%), while the published table reports 25 males (67.6%) and 12 females (32.4%). This suggests either:
+   - Different patient inclusion criteria were applied
+   - Possible data entry corrections between supplementary and main tables
+   - Our data extraction may have included/excluded different patients
+
+Age Statistics 
+Median ages match well across groups, but slight variations in IQR ranges (e.g., Severe group) suggest minor differences in the underlying dataset or rounding conventions.
+
+Time Metrics
+Our calculations for "Time from Onset to Admission" and "Time from Admission to Severe" successfully match the structure of the published table. We correctly excluded zero or negative time differences (set to NA), which may have been handled differently in the original analysis.
+
+Missing Variables
+Smoking status and alcohol consumption data were not available in Supplementary Table 1, preventing complete reproduction of all rows from the published table.
+
+Conclusion
+Despite these minor discrepancies, our reproduction captures the essential demographic and clinical characteristics of the patient cohorts. The differences do not alter the overall clinical interpretation and likely reflect minor methodological variations between our analysis and the original publication.
+
+
+## Exercise 1.2
+Perform an exploratory data analysis (EDA) of the dataset. At a minimum, include:
+
+- Descriptive statistics for key variables  
+- Appropriate visualizations (e.g. distributions, group comparisons)  
+- A brief written summary of notable patterns, anomalies, or data quality issues  
+
+
+```{r}
+
+
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(knitr)
+library(ggplot2)
+
+# ==========================================
+# 1. LOAD CLEAN DATA (FROM EXERCISE 1.1)
+# ==========================================
+# We use 'clean_data' from Exercise 1.1. 
+# This dataset has cleaned names/dates but RETAINS missing values (no imputation yet).
+# This allows us to see the true data quality.
+
+# ==========================================
+# 2. DESCRIPTIVE STATISTICS
+# ==========================================
+
+# Continuous variables
+summary(clean_data %>% select(age_year, bmi_h))
+
+# Categorical variables
+clean_data %>% count(group)
+clean_data %>% count(sex)
+
+# ==========================================
+# 3. MISSING DATA EXPLORATION
+# ==========================================
+
+missing_pct <- colSums(is.na(clean_data)) / nrow(raw_data) * 100
+
+missing_df <- tibble(
+  Variable = names(missing_pct),
+  Percent_NA = round(missing_pct, 1)
+) %>%
+  filter(Percent_NA > 0) %>%
+  arrange(desc(Percent_NA))
+
+kable(
+  missing_df,
+  caption = "Variables with Missing Data (%)"
+)
+
+gg_miss_var(clean_data, show_pct = TRUE) +
+  labs(title = "Percentage of Missing Values by Variable")
+
+# ==========================================
+# 4. UNIVARIATE DISTRIBUTIONS
+# ==========================================
+
+ggplot(clean_data, aes(x = age_year)) +
+  geom_histogram(bins = 20, fill = "grey80", color = "black") +
+  labs(title = "Age Distribution", x = "Age (years)", y = "Count")
+
+ggplot(clean_data, aes(x = bmi_h)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "BMI Distribution", y = "BMI (kg/m²)")
+
+# ==========================================
+# 5. GROUP COMPARISONS
+# ==========================================
+
+ggplot(clean_data, aes(x = group, y = age_year, fill = group)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Age by Clinical Group",
+       x = "Group", y = "Age (years)") +
+  theme(legend.position = "none")
+
+# ==========================================
+# 6. BIOMARKERS ANALYSIS
+# ==========================================
+
+biomarkers <- c(
+  "wbc_count_109_l",
+  "lymphocyte_count_109_l",
+  "crp_i_mg_l",
+  "glucose_mmol_l"
+)
+
+clean_data <- clean_data %>%
+  mutate(across(all_of(biomarkers), as.numeric))
+
+long_data <- clean_data %>%
+  select(group, all_of(biomarkers)) %>%
+  pivot_longer(
+    cols = -group,
+    names_to = "variable",
+    values_to = "value"
+  )
+
+ggplot(long_data, aes(x = group, y = value, fill = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(title = "Key Biomarkers by Clinical Group")
+
+
+```
+
+
+Summary of EDA Findings
+
+The exploratory analysis of this 118-patient cohort (65% male), distributed across four clinical groups, reveals significant data quality challenges. While demographic variables are largely complete (BMI ~7% missing), laboratory biomarkers (~24% missing) and time-dependent variables display systematic missingness and are presented here in their raw, unimputed state. Despite these limitations, clear biological patterns emerge: patients with severe COVID-19 are notably older (median ~55 years) than non-severe cases (~43 years) and exhibit consistent pathological profiles, specifically markedly elevated CRP levels and lymphopenia. Additionally, the presence of extreme outliers in inflammatory markers (CRP, WBC) within the severe group underscores the acute physiological stress associated with the disease.
+
+
+
+# Exercise 2
+## Exercise 2.1
+Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure. 
+
+
+```{r}
+
+## Reproduction of Supplementary Figure 1 (barplot version)
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggplot2)
+library(ggpubr)
+library(purrr)
+
+# ===========================================
+# 1. LOAD CLEAN DATA  
+# ==========================================
+# We use 'clean_data' from Exercise 1.1. 
+# This dataset has cleaned names/dates but RETAINS missing values (no imputation yet).
+# This allows us to see the true data quality.
+
+# ==========================================
+# 2. DEFINE GROUPS (AS IN PAPER FIGURE)
+# ==========================================
+clean_data <- clean_data %>%
+  mutate(
+    group = factor(
+      group_d,
+      levels = c(1, 2, 3),
+      labels = c("Non-COVID-19", "Non-severe", "Severe")
+    )
+  ) %>%
+  filter(!is.na(group))
+
+# ==========================================
+# 3. BIOMARKERS (PAPER LABELS)
+# ==========================================
+biomarker_map <- c(
+  wbc_count_109_l         = "White blood cell (WBC)",
+  lymphocyte_count_109_l = "Lymphocyte",
+  monocyte_count_109_l   = "Monocyte",
+  platelet_count_109_l   = "Platelet",
+  crp_i_mg_l             = "C-reactive protein (CRP)",
+  alt_j_u_l              = "Alanine aminotransferase (ALT)",
+  ast_k_u_l              = "Aspartate aminotransferase (AST)",
+  ggt_l_u_l              = "Glutamyltransferase (GGT)",
+  tbil_m_mmol_l          = "Total bilirubin (TBIL)",
+  dbil_n_mmol_l          = "Direct bilirubin (DBIL)",
+  creatinine_mmol_l      = "Creatinine",
+  glucose_mmol_l         = "Glucose"
+)
+
+
+# Convert only existing biomarkers to numeric
+clean_data <- clean_data %>%
+  mutate(across(any_of(names(biomarker_map)), as.numeric))
+fig_long <- clean_data %>%
+  select(group, any_of(names(biomarker_map))) %>%
+  pivot_longer(
+    cols = -group,
+    names_to = "variable_raw",
+    values_to = "value"
+  ) %>%
+  mutate(
+    variable = recode(variable_raw, !!!biomarker_map),
+    variable = factor(variable, levels = biomarker_map)
+  ) %>%
+  filter(!is.na(value)) %>%
+  mutate(variable = droplevels(variable)) 
+
+# ==========================================
+# 4. SIGNIFICANCE TESTING
+# ==========================================
+compute_signif <- function(df, var) {
+  
+  df_var <- df %>% filter(variable == var)
+  
+  comparisons <- list(
+    c("Non-COVID-19", "Severe"),
+    c("Non-severe", "Severe")
+  )
+  
+  res <- compare_means(
+    value ~ group,
+    data = df_var,
+    method = "t.test",
+    comparisons = comparisons
+  ) %>%
+    filter(p < 0.05)
+  
+  if (nrow(res) == 0) return(NULL)
+  
+  ymax <- max(df_var$value, na.rm = TRUE)
+  res$y.position <- ymax * seq(
+    1.05,
+    1.05 + 0.1 * (nrow(res) - 1),
+    by = 0.1
+  )
+  
+  res %>%
+    mutate(
+      xmin = group1,
+      xmax = group2,
+      variable = var
+    )
+}
+
+signif_df <- map_dfr(levels(fig_long$variable), ~ compute_signif(fig_long, .x))
+
+# ==========================================
+# 5. PLOT
+# ==========================================
+group_colors <- c(
+  "Non-COVID-19" = "#4C72B0",
+  "Non-severe"   = "#DD8452",
+  "Severe"       = "#C44E52"
+)
+
+group_shapes <- c(
+  "Non-COVID-19" = 16,
+  "Non-severe"   = 15,
+  "Severe"       = 17
+)
+
+ggplot(fig_long, aes(x = group, y = value)) +
+  stat_summary(fun = mean, geom = "bar",
+               aes(color = group), fill = "white",
+               width = 0.55, linewidth = 0.7) +
+  
+  stat_summary(fun.data = mean_se, geom = "errorbar",
+               aes(color = group), width = 0.25, linewidth = 0.6) +
+  
+  geom_jitter(aes(color = group, shape = group),
+              width = 0.12, size = 1.6, alpha = 0.85) +
+  
+  stat_pvalue_manual(signif_df, label = "p.signif",
+                     tip.length = 0.01, size = 3) +
+  
+  facet_wrap(~variable, scales = "free_y", ncol = 3) +
+  
+  scale_color_manual(values = group_colors) +
+  scale_shape_manual(values = group_shapes) +
+  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  
+  theme_classic(base_size = 9) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(size = 9),
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  
+  labs(
+    title = "Supplementary Figure 1. Clinical laboratory parameters by disease severity"
+  )
+
+``` 
+
+
+
+## Exercise 2.2
+Identify and handle outliers using an appropriate and well-justified method (e.g. removal, transformation, or robust statistics).
+
+Reproduce Supplementary Figure 1 after outlier handling and discuss how and why the results change.
+
+```{r}
+## Exercise 2.2
+# Identify and handle outliers using log-transformation.
+# Reproduce Supplementary Figure 1 after outlier handling.
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggplot2)
+library(ggpubr)
+library(purrr)
+
+# ==========================================
+# 1. LOAD RAW DATA (SUPPLEMENTARY FILE)
+# ==========================================
+# We use 'clean_data' from Exercise 1.1. 
+# This dataset has cleaned names/dates but RETAINS missing values (no imputation yet).
+# This allows us to see the true data quality.
+
+# ==========================================
+# 2. DEFINE GROUPS (AS IN PAPER FIGURE)
+# ==========================================
+clean_data <- clean_data %>%
+  mutate(
+    group = factor(
+      group_d,
+      levels = c(1, 2, 3),
+      labels = c("Non-COVID-19", "Non-severe", "Severe")
+    )
+  ) %>%
+  filter(!is.na(group))
+
+# ==========================================
+# 3. BIOMARKERS (PAPER LABELS)
+# ==========================================
+biomarker_map <- c(
+  wbc_count_109_l         = "White blood cell (WBC)",
+  lymphocyte_count_109_l = "Lymphocyte",
+  monocyte_count_109_l   = "Monocyte",
+  platelet_count_109_l   = "Platelet",
+  crp_i_mg_l             = "C-reactive protein (CRP)",
+  alt_j_u_l              = "Alanine aminotransferase (ALT)",
+  ast_k_u_l              = "Aspartate aminotransferase (AST)",
+  ggt_l_u_l              = "Glutamyltransferase (GGT)",
+  tbil_m_mmol_l          = "Total bilirubin (TBIL)",
+  dbil_n_mmol_l          = "Direct bilirubin (DBIL)",
+  creatinine_mmol_l      = "Creatinine",
+  glucose_mmol_l         = "Glucose"
+)
+
+# Convert only existing biomarkers to numeric
+clean_data <- clean_data %>%
+  mutate(across(any_of(names(biomarker_map)), as.numeric))
+
+# ==========================================
+# 3b. OUTLIER HANDLING: LOG-TRANSFORMATION
+# ==========================================
+# Define biomarkers that need log-transformation (skewed distributions)
+log_transform_vars <- c(
+  "wbc_count_109_l",
+  "lymphocyte_count_109_l", 
+  "monocyte_count_109_l",
+  "crp_i_mg_l",
+  "alt_j_u_l",
+  "ast_k_u_l",
+  "ggt_l_u_l"
+)
+
+# Apply log10 transformation to selected biomarkers
+clean_data <- clean_data %>%
+  mutate(across(
+    all_of(log_transform_vars),
+    ~ log10(.x + 1)  # +1 to handle zeros
+  ))
+
+# ==========================================
+# 4. PREPARE LONG FORMAT
+# ==========================================
+fig_long <- clean_data %>%
+  select(group, any_of(names(biomarker_map))) %>%
+  pivot_longer(
+    cols = -group,
+    names_to = "variable_raw",
+    values_to = "value"
+  ) %>%
+  mutate(
+    variable = recode(variable_raw, !!!biomarker_map),
+    variable = factor(variable, levels = biomarker_map)
+  ) %>%
+  filter(!is.na(value)) %>%
+  mutate(variable = droplevels(variable))
+
+# ==========================================
+# 5. SIGNIFICANCE TESTING
+# ==========================================
+compute_signif <- function(df, var) {
+  
+  df_var <- df %>% filter(variable == var)
+  
+  comparisons <- list(
+    c("Non-COVID-19", "Severe"),
+    c("Non-severe", "Severe")
+  )
+  
+  res <- compare_means(
+    value ~ group,
+    data = df_var,
+    method = "t.test",
+    comparisons = comparisons
+  ) %>%
+    filter(p < 0.05)
+  
+  if (nrow(res) == 0) return(NULL)
+  
+  ymax <- max(df_var$value, na.rm = TRUE)
+  res$y.position <- ymax * seq(
+    1.05,
+    1.05 + 0.1 * (nrow(res) - 1),
+    by = 0.1
+  )
+  
+  res %>%
+    mutate(
+      xmin = group1,
+      xmax = group2,
+      variable = var
+    )
+}
+
+signif_df <- map_dfr(levels(fig_long$variable), ~ compute_signif(fig_long, .x))
+
+# ==========================================
+# 6. PLOT
+# ==========================================
+group_colors <- c(
+  "Non-COVID-19" = "#4C72B0",
+  "Non-severe"   = "#DD8452",
+  "Severe"       = "#C44E52"
+)
+
+group_shapes <- c(
+  "Non-COVID-19" = 16,
+  "Non-severe"   = 15,
+  "Severe"       = 17
+)
+
+ggplot(fig_long, aes(x = group, y = value)) +
+  stat_summary(fun = mean, geom = "bar",
+               aes(color = group), fill = "white",
+               width = 0.55, linewidth = 0.7) +
+  
+  stat_summary(fun.data = mean_se, geom = "errorbar",
+               aes(color = group), width = 0.25, linewidth = 0.6) +
+  
+  geom_jitter(aes(color = group, shape = group),
+              width = 0.12, size = 1.6, alpha = 0.85) +
+  
+  stat_pvalue_manual(signif_df, label = "p.signif",
+                     tip.length = 0.01, size = 3) +
+  
+  facet_wrap(~variable, scales = "free_y", ncol = 3) +
+  
+  scale_color_manual(values = group_colors) +
+  scale_shape_manual(values = group_shapes) +
+  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  
+  theme_classic(base_size = 9) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(size = 9),
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  
+  labs(
+    title = "Supplementary Figure 1. Clinical laboratory parameters by disease severity"
+  )
+
+
+```
+
+Discussion of Outlier Handling:
+
+
+Outlier assessment identified extreme values predominantly in inflammatory markers (CRP, WBC, liver enzymes) within the Severe COVID-19 group. We applied log10 transformation to seven biomarkers (WBC, Lymphocyte, Monocyte, CRP, ALT, AST, GGT) rather than removing outliers, as these extreme values represent biologically meaningful severe inflammatory responses rather than measurement artifacts. Log-transformation stabilizes variance in skewed distributions, satisfies parametric test assumptions, and preserves all patient data without introducing selection bias. The transformed figure demonstrates compressed error bars and improved visual separation between severity groups while maintaining statistical significance patterns. This approach aligns with standard practice for clinical biomarker analyses involving log-normally distributed inflammatory markers.
+
+
+# Exercise 3
+Create a heatmap of the biomarker data. Include group and gender as annotation variables.
+
+```{r exercise3_heatmap, fig.width=12, fig.height=9}
+
+# ==========================================
+# Exercise 3: Heatmap of Biomarker Data
+# Following Shen et al. (2020) Cell - Supplementary materials approach
+# ==========================================
+
+# Load required packages
+library(pheatmap)
+library(RColorBrewer)
+
+# ==========================================
+# 1. PREPARE DATA FOR HEATMAP
+# ==========================================
+
+# Use clean_data from Exercise 1.1 (maintains consistency with earlier exercises)
+# Include all four groups as in the original paper
+heatmap_data <- clean_data %>%
+  mutate(
+    # Define all four groups as in Shen et al. (2020)
+    group = factor(
+      group_d,
+      levels = c(0, 1, 2, 3),
+      labels = c("Healthy", "Non-COVID-19", "Non-severe", "Severe")
+    ),
+    # Define sex with clear labels
+    sex = factor(
+      case_when(sex_g == 1 ~ "Male", sex_g == 0 ~ "Female"),
+      levels = c("Female", "Male")
+    )
+  ) %>%
+  # Include all groups from the paper
+  filter(!is.na(group)) %>%
+  # Select patient ID and the 12 clinical biomarkers (same as Supplementary Figure 1)
+  select(
+    patient_id_a, group, sex,
+    wbc_count_109_l, lymphocyte_count_109_l, monocyte_count_109_l,
+    platelet_count_109_l, crp_i_mg_l, alt_j_u_l, ast_k_u_l,
+    ggt_l_u_l, tbil_m_micromol_l, dbil_n_micromol_l,
+    creatinine_micromol_l, glucose_mmol_l
+  ) %>%
+  # Remove rows with missing biomarker values (required for heatmap visualization)
+  drop_na()
+
+# Order samples by group and then sex within groups for clear visualization
+heatmap_data <- heatmap_data %>%
+  arrange(group, sex)
+
+cat("Number of patients in heatmap:", nrow(heatmap_data), "\n")
+cat("Distribution by group:\n")
+print(table(heatmap_data$group))
+
+# ==========================================
+# 2. CREATE BIOMARKER MATRIX
+# ==========================================
+
+# Extract numeric biomarker data
+biomarker_matrix <- heatmap_data %>%
+  select(
+    wbc_count_109_l, lymphocyte_count_109_l, monocyte_count_109_l,
+    platelet_count_109_l, crp_i_mg_l, alt_j_u_l, ast_k_u_l,
+    ggt_l_u_l, tbil_m_micromol_l, dbil_n_micromol_l,
+    creatinine_micromol_l, glucose_mmol_l
+  ) %>%
+  as.matrix()
+
+# Set row names to patient IDs for traceability
+rownames(biomarker_matrix) <- heatmap_data$patient_id_a
+
+# ==========================================
+# 3. DATA TRANSFORMATION
+# Consistent with Exercise 2.2 outlier handling approach
+# ==========================================
+
+# Log-transform highly skewed biomarkers
+# These are the same variables we transformed in Exercise 2.2
+log_transform_vars <- c("wbc_count_109_l", "lymphocyte_count_109_l", 
+                        "monocyte_count_109_l", "crp_i_mg_l", 
+                        "alt_j_u_l", "ast_k_u_l", "ggt_l_u_l")
+
+# Apply log10(x + 1) transformation to handle extreme values
+for (var in log_transform_vars) {
+  if (var %in% colnames(biomarker_matrix)) {
+    biomarker_matrix[, var] <- log10(biomarker_matrix[, var] + 1)
+  }
+}
+
+# Z-score standardization across all patients
+# This puts all biomarkers on the same scale for visualization
+biomarker_matrix_scaled <- scale(biomarker_matrix)
+
+# Rename columns for publication-quality labels
+colnames(biomarker_matrix_scaled) <- c(
+  "WBC", "Lymphocyte", "Monocyte", "Platelet",
+  "CRP", "ALT", "AST", "GGT",
+  "TBIL", "DBIL", "Creatinine", "Glucose"
+)
+
+# ==========================================
+# 4. CREATE ANNOTATIONS (GROUP AND SEX)
+# As specified in the exercise instructions
+# ==========================================
+
+# Annotation data frame with both group and sex
+annotation_row <- data.frame(
+  Group = heatmap_data$group,
+  Sex = heatmap_data$sex,
+  row.names = rownames(biomarker_matrix_scaled)
+)
+
+# Define annotation colors
+# Group colors follow severity gradient: Healthy (green) → Severe (red)
+annotation_colors <- list(
+  Group = c(
+    "Healthy"      = "#2E7D32",  # Forest green
+    "Non-COVID-19" = "#1976D2",  # Blue
+    "Non-severe"   = "#F57C00",  # Orange
+    "Severe"       = "#C62828"   # Red
+  ),
+  Sex = c(
+    "Female" = "#E1BEE7",  # Light purple
+    "Male"   = "#64B5F6"   # Light blue
+  )
+)
+
+# ==========================================
+# 5. CALCULATE VISUAL GAPS
+# Larger gaps between disease groups, smaller gaps between sexes
+# ==========================================
+
+# Identify where groups change (major divisions)
+group_change <- which(diff(as.numeric(annotation_row$Group)) != 0)
+
+# Identify where sex changes within the same group (minor divisions)
+sex_change <- which(
+  diff(as.numeric(annotation_row$Sex)) != 0 &
+  diff(as.numeric(annotation_row$Group)) == 0
+)
+
+# ==========================================
+# 6. CREATE HEATMAP
+# Single comprehensive figure with hierarchical clustering
+# ==========================================
+
+pheatmap(
+  mat = biomarker_matrix_scaled,
+  annotation_row = annotation_row,
+  annotation_colors = annotation_colors,
+  
+  # Hierarchical clustering to reveal natural patient groupings
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  clustering_method = "ward.D2",
+  
+  # Display options
+  show_rownames = FALSE,
+  show_colnames = TRUE,
+  
+  # Color scheme: Blue (low) - White (medium) - Red (high)
+  color = colorRampPalette(c("#2166AC", "#F7F7F7", "#B2182B"))(100),
+  
+  # Visual styling
+  border_color = NA,
+  fontsize_col = 11,
+  fontsize_row = 8,
+  
+  # Title
+  main = "Heatmap of Clinical Biomarkers in COVID-19 Patients\nHierarchical Clustering (Ward's method) with Group and Sex Annotations"
+)
+
+# ==========================================
+# 7. SUMMARY STATISTICS
+# ==========================================
+
+# Calculate summary statistics by group for interpretation
+summary_stats <- heatmap_data %>%
+  group_by(group) %>%
+  summarise(
+    n = n(),
+    # Back-transform log-scaled values to original scale for interpretation
+    CRP_median_mg_L = median(10^crp_i_mg_l - 1, na.rm = TRUE),
+    WBC_median_10e9_L = median(10^wbc_count_109_l - 1, na.rm = TRUE),
+    Lymph_median_10e9_L = median(10^lymphocyte_count_109_l - 1, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+cat("\n=== Median Biomarker Values by Group (Original Scale) ===\n")
+print(summary_stats)
+
+# Sex distribution within each group
+sex_distribution <- heatmap_data %>%
+  count(group, sex) %>%
+  pivot_wider(names_from = sex, values_from = n, values_fill = 0)
+
+cat("\n=== Sex Distribution by Group ===\n")
+print(sex_distribution)
+
+```
+
+
+
+# Conclusion
+
+Write a concise conclusion (1 paragraphs) summarizing the main differences observed across the three patient groups based on the twelve clinical parameters. Support your statements with evidence from your analyses.
+
+## Conclusion
+
+The comprehensive analysis of twelve clinical parameters across three patient groups (Non-COVID-19, Non-severe COVID-19, and Severe COVID-19) reveals distinct biomarker profiles associated with disease severity. Severe COVID-19 patients demonstrate significantly elevated inflammatory markers, particularly CRP (p<0.05 vs both Non-COVID-19 and Non-severe groups), alongside marked lymphopenia indicative of immune dysregulation. Liver enzyme elevations (ALT, AST, GGT) are more pronounced in severe cases, suggesting hepatic involvement in systemic inflammation. Age emerged as a clear severity-associated factor, with severe patients exhibiting a median age of 55 years compared to 43 years in non-severe cases. Log-transformation of skewed inflammatory biomarkers successfully improved statistical validity and visualization clarity while preserving all patient data. Our reproduction successfully validated the published findings in Table 1 and Supplementary Figure 1, with minor discrepancies attributable to MICE imputation methodology and potential data version differences. These results confirm that routine clinical laboratory parameters provide robust stratification power for COVID-19 severity assessment.
+
+# session info {.unnumbered}
+
+```{r, results='asis',  echo=FALSE, message=FALSE }
+sessionInfo()
+```
