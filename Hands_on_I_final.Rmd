@@ -5,7 +5,16 @@ date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: false
+    theme: flatly
+    highlight: tango
     fig_caption: true
+    df_print: paged
+---
 ---
 
 ```{r setup, include=FALSE}
@@ -1088,10 +1097,6 @@ with coordinated expression in Severe patients, while lymphocytes showed
 inverse correlation consistent with COVID-19-associated lymphopenia. 
 No sex-based clustering observed. 
 
-
-# Conclusion
-
-Write a concise conclusion (1 paragraphs) summarizing the main differences observed across the three patient groups based on the twelve clinical parameters. Support your statements with evidence from your analyses.
 
 ## Conclusion
 Analysis of 90 COVID-19 patients across three severity groups revealed:
